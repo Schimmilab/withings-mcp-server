@@ -255,18 +255,24 @@ class WithingsServer:
 
             return data.get("body", {})
 
-    def _parse_date(self, date_str: Optional[str]) -> Optional[int]:
-        """Parse date string to Unix timestamp."""
+    def _parse_date(self, date_str: Optional[str], end_of_day: bool = False) -> Optional[int]:
+        """Parse date string to Unix timestamp.
+
+        When end_of_day=True and a YYYY-MM-DD string is given, returns 23:59:59 of that day
+        instead of 00:00:00, so the full day is included in date range queries.
+        """
         if not date_str:
             return None
 
-        # If already a timestamp
-        if date_str.isdigit():
+        # If already a timestamp, return as-is (caller controls precision)
+        if str(date_str).isdigit():
             return int(date_str)
 
         # Parse YYYY-MM-DD format
         try:
             dt = datetime.strptime(date_str, "%Y-%m-%d")
+            if end_of_day:
+                dt = dt.replace(hour=23, minute=59, second=59)
             return int(dt.timestamp())
         except ValueError:
             raise ValueError(f"Invalid date format: {date_str}. Use YYYY-MM-DD or Unix timestamp")
@@ -313,7 +319,7 @@ class WithingsServer:
         if "startdate" in args:
             params["startdate"] = self._parse_date(args["startdate"])
         if "enddate" in args:
-            params["enddate"] = self._parse_date(args["enddate"])
+            params["enddate"] = self._parse_date(args["enddate"], end_of_day=True)
         if "lastupdate" in args:
             params["lastupdate"] = self._parse_date(args["lastupdate"])
 
@@ -354,7 +360,7 @@ class WithingsServer:
         if "startdate" in args:
             params["startdate"] = self._parse_date(args["startdate"])
         if "enddate" in args:
-            params["enddate"] = self._parse_date(args["enddate"])
+            params["enddate"] = self._parse_date(args["enddate"], end_of_day=True)
 
         return await self._make_request("/v2/sleep", params)
 
@@ -376,7 +382,7 @@ class WithingsServer:
         if "startdate" in args:
             params["startdate"] = self._parse_date(args["startdate"])
         if "enddate" in args:
-            params["enddate"] = self._parse_date(args["enddate"])
+            params["enddate"] = self._parse_date(args["enddate"], end_of_day=True)
 
         return await self._make_request("/v2/measure", params)
 
