@@ -59,6 +59,30 @@ class WithingsAuth:
         # If not found, return .env in project root (not cwd to avoid permission issues)
         return project_env
 
+    def _reload_tokens_from_env(self):
+        """Re-read access/refresh tokens from the .env file.
+
+        Lets the running server pick up tokens that were rotated by another
+        process or written by a fresh re-authorization (generate_tokens.py)
+        without needing a restart. Silently does nothing if the file is missing.
+        """
+        if not self.env_file.exists():
+            return
+        try:
+            with open(self.env_file, "r") as f:
+                for line in f:
+                    line = line.strip()
+                    if not line or line.startswith("#") or "=" not in line:
+                        continue
+                    key, value = line.split("=", 1)
+                    key, value = key.strip(), value.strip()
+                    if key == "WITHINGS_ACCESS_TOKEN" and value:
+                        self.access_token = value
+                    elif key == "WITHINGS_REFRESH_TOKEN" and value:
+                        self.refresh_token = value
+        except OSError:
+            return
+
     def get_authorization_url(self, scope: str = "user.info,user.metrics,user.activity") -> str:
         """Generate OAuth2 authorization URL."""
         params = {
@@ -104,9 +128,21 @@ class WithingsAuth:
                 raise Exception(f"Token exchange failed: {data}")
 
     async def refresh_access_token(self, save_to_env: bool = True) -> dict:
-        """Refresh the access token using refresh token."""
+        """Refresh the access token using the refresh token.
+
+        Re-reads the refresh token from .env first so that a token rotated by
+        another process or a fresh re-authorization (generate_tokens.py) is used
+        without restarting the server. Withings may rotate the refresh token on
+        refresh, so the freshest stored value always wins.
+        """
+        # Pick up externally rotated / re-authorized tokens before refreshing
+        self._reload_tokens_from_env()
+
         if not self.refresh_token:
-            raise Exception("No refresh token available")
+            raise Exception(
+                "No refresh token available — authorize first by running "
+                "generate_tokens.py."
+            )
 
         async with httpx.AsyncClient() as client:
             response = await client.post(
@@ -134,19 +170,32 @@ class WithingsAuth:
                     self._save_tokens_to_env()
 
                 return body
-            else:
-                raise Exception(f"Token refresh failed: {data}")
+
+            # Refresh token dead (expired/invalidated) -> only re-auth helps.
+            error = str(data.get("error", "")).lower()
+            if "refresh_token" in error or "invalid_grant" in error or "invalid token" in error:
+                raise Exception(
+                    "Refresh token invalid or expired — re-authorization required. "
+                    "Run `python generate_tokens.py` (or use the get_authorization_url "
+                    f"flow) to issue new tokens. Withings response: {data}"
+                )
+            raise Exception(f"Token refresh failed: {data}")
 
     async def ensure_valid_token(self):
         """Ensure we have a valid access token, refreshing if necessary."""
         if not self.access_token:
-            raise Exception("No access token available. Please authenticate first.")
+            # Tokens may have been written to .env after this object was created
+            self._reload_tokens_from_env()
+        if not self.access_token:
+            raise Exception(
+                "No access token available — authorize first by running "
+                "generate_tokens.py."
+            )
 
-        # If no expiry time is set, try to use the token
-        # If it fails with 401, the API will tell us and we can refresh
+        # If no expiry time is set (token loaded from env), don't refresh
+        # pre-emptively: use it and let a 401 drive a refresh in _make_request.
+        # That refresh re-reads .env, so externally rotated tokens self-heal.
         if self.token_expires_at is None:
-            # Token loaded from env without expiry - try a test request
-            # If it fails, the caller will need to handle it
             return
 
         # Refresh if token expires in less than 5 minutes
