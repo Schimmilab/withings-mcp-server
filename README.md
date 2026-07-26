@@ -359,3 +359,8 @@ If you get `invalid_token` or 401 errors:
 - All dates can be specified as YYYY-MM-DD or Unix timestamp
 - The API is subject to Withings rate limits (see API documentation)
 - **Timestamps are converted to local timezone**: All date/time fields in responses are automatically converted from UTC to your local timezone in ISO 8601 format (e.g., `2025-12-25T14:30:00+01:00`)
+
+## Maintainer
+
+Schimmi — https://schimmilab.de
+Issues und Pull Requests willkommen.
